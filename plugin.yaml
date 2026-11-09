@@ -1,0 +1,11 @@
+name: pr-ready-checker
+version: 0.1.0
+description: "Pre-PR gate for Hermes: checks whether a branch is ready for a pull request — branch hygiene, clean tree, whitespace, secrets and debug prints on added lines, lint, scoped tests, Conventional Commits, PR-body draft, docs/config drift, and CI status. Fails closed; --fix only runs ruff --fix / ruff format; blocking is via an installed git pre-push hook, not a Hermes hook."
+author: phon-t
+kind: standalone
+platforms:
+  - linux
+  - macos
+provides_tools:
+  - pr_ready_check
+requires_hermes: ">=0.21.6"
