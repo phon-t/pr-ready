@@ -76,13 +76,14 @@ and runs `gh pr create` with the first commit's subject as the title
 purpose: opening a PR writes to the remote, so it is never a tool the
 agent can call on its own — running the command is the explicit decision.
 
-## The 11 checks
+## The 12 checks
 
 | Check | What it does | Severity |
 |---|---|---|
 | Branch hygiene | Not on the default branch, at least one commit vs merge-base, no merge commits | FAIL |
 | Clean tree | No uncommitted changes or untracked files | FAIL |
 | Whitespace | `git diff --check` on the PR range | FAIL |
+| Large files | Binary files in the diff, or files over 1 MB, fail; files over 256 KB warn | FAIL / WARN |
 | Secrets | AWS keys, GitHub/Slack tokens, `api_key`/`secret`/`password` assignments, private keys on added lines (known placeholders ignored) | FAIL |
 | Debug hygiene | `print()` / `console.*`, bare or broad `except`, TODO / FIXME / HACK on added lines | WARN (FAIL with `--strict`) |
 | Lint | `scripts/check` when the repo has one, else `ruff check` when ruff is configured (ruff from PATH, the repo's `.venv`, or `python -m ruff`); skipped when neither exists | FAIL |
@@ -107,9 +108,11 @@ removes a hook it manages.
 
 ## --fix
 
-`--fix` only runs `ruff check --fix` and `ruff format` where ruff is
-configured. Everything else prints the exact command to run. Nothing is ever
-committed for you, and the gate never rewrites code it does not understand.
+`--fix` runs `ruff check --fix` and `ruff format` where ruff is
+configured, and strips trailing whitespace from the exact lines
+`git diff --check` flagged in the PR range. Everything else prints the
+exact command to run. Nothing is ever committed for you, and the gate
+never rewrites code it does not understand.
 
 ## Disclosures
 
@@ -120,14 +123,15 @@ committed for you, and the gate never rewrites code it does not understand.
   in. No telemetry, no phoning home.
 - **Credentials:** none stored or read. GitHub access goes through the
   user's logged-in `gh`, never `.env` or `auth.json`.
-- **Writes:** the pre-push hook file, and whatever `ruff --fix` changes.
-  Nothing else. The gate leaves no trace in the repo it checks: test runs
-  are done with bytecode writing and the pytest cache disabled.
+- **Writes:** the pre-push hook file, and whatever `ruff --fix` and the
+  whitespace fixer change. Nothing else. The gate leaves no trace in the
+  repo it checks: test runs are done with bytecode writing and the pytest
+  cache disabled.
 
 ## Development
 
 ```sh
-python -m pytest tests/        # 19 tests on throwaway git repos, no network
+python -m pytest tests/        # 24 tests on throwaway git repos, no network
 ruff check pr_ready tests __init__.py
 ruff format --check pr_ready tests __init__.py
 hermes plugins validate .      # same check catalog CI runs

@@ -1,16 +1,82 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from .git_range import diff_check
 
 __all__ = [
     "ruff_argv",
     "ruff_available",
     "ruff_configured",
     "apply_ruff_fixes",
+    "apply_whitespace_fixes",
 ]
+
+_WS_RE = re.compile(r"^(.+?):(\d+): trailing whitespace\.?$")
+
+
+def apply_whitespace_fixes(root: Path, merge_base: str) -> tuple[bool, str]:
+    """Strip trailing whitespace from lines flagged by ``git diff --check``.
+
+    Safety contract (same spirit as :func:`apply_ruff_fixes`):
+      - Only touches lines ``git diff --check`` flagged in the PR range,
+        and only removes trailing spaces/tabs on those lines.
+      - Never stages, never commits. Every change is reversible via git.
+      - Files are handled as bytes, so any encoding survives; a flagged
+        line without trailing whitespace (stale line number on a dirty
+        tree) is left alone, and a missing file is skipped.
+
+    Returns (applied, detail) where *detail* explains what happened.
+    """
+    problems = diff_check(root, merge_base)
+    flagged: dict[str, set[int]] = {}
+    for problem in problems:
+        match = _WS_RE.match(problem)
+        if not match:
+            continue
+        flagged.setdefault(match.group(1), set()).add(int(match.group(2)))
+
+    if not flagged:
+        return (False, "no whitespace errors; nothing to fix")
+
+    fixed_lines = 0
+    fixed_files = 0
+    for rel, line_numbers in sorted(flagged.items()):
+        path = (root / rel).resolve()
+        if not path.is_relative_to(root.resolve()):
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        lines = raw.split(b"\n")
+        changed = False
+        for number in line_numbers:
+            index = number - 1
+            if 0 <= index < len(lines):
+                stripped = lines[index].rstrip(b" \t")
+                if stripped != lines[index]:
+                    lines[index] = stripped
+                    fixed_lines += 1
+                    changed = True
+        if changed:
+            try:
+                path.write_bytes(b"\n".join(lines))
+            except OSError:
+                continue
+            fixed_files += 1
+
+    if fixed_lines == 0:
+        return (False, "flagged lines had no trailing whitespace left; nothing to fix")
+    noun = "line" if fixed_lines == 1 else "lines"
+    return (
+        True,
+        f"stripped trailing whitespace from {fixed_lines} {noun} in {fixed_files} file(s)",
+    )
 
 
 def _run(cmd: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str, str]:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from .git_range import AddedLine, RepoInfo
+from .git_range import AddedLine, FileChange, RepoInfo
 from .report import CheckResult, Severity
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "check_branch",
     "check_clean_tree",
     "check_whitespace",
+    "check_large_files",
     "check_secrets",
     "check_debug",
     "check_commits",
@@ -200,6 +201,75 @@ def check_whitespace(problems: list[str]) -> CheckResult:
         title="Whitespace",
         severity=Severity.PASS,
         detail="no whitespace errors",
+        fix="",
+        items=[],
+    )
+
+
+def _human_size(size: int) -> str:
+    """Render *size* bytes as e.g. ``"300 KB"`` or ``"1.2 MB"``."""
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+# A file bigger than this in the diff is almost certainly an accident
+# (a screenshot, a build artifact, a dataset). Smaller-but-large files
+# still deserve a second look before review.
+_WARN_BYTES = 256 * 1024
+_FAIL_BYTES = 1024 * 1024
+
+
+def check_large_files(changes: list[FileChange], sizes: dict[str, int]) -> CheckResult:
+    """Flag accidental binaries and oversized files in the diff.
+
+    Binary files fail outright: a PR should never carry a binary by
+    accident, and a deliberate one belongs in a release asset, not a
+    diff. Files over 1 MB fail; files over 256 KB warn. *sizes* maps
+    paths to their byte size at HEAD; a path missing from it (deleted
+    files, unreadable blobs) is skipped.
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    for change in changes:
+        if change.status == "binary":
+            size = sizes.get(change.path)
+            suffix = f", {_human_size(size)}" if size is not None else ""
+            failures.append(f"{change.path} (binary{suffix})")
+            continue
+        size = sizes.get(change.path)
+        if size is None:
+            continue
+        if size > _FAIL_BYTES:
+            failures.append(f"{change.path} ({_human_size(size)})")
+        elif size > _WARN_BYTES:
+            warnings.append(f"{change.path} ({_human_size(size)})")
+
+    if failures:
+        return CheckResult(
+            id="large-files",
+            title="Large files",
+            severity=Severity.FAIL,
+            detail=f"{len(failures)} binary/oversized file(s) in the diff",
+            fix="remove the file from the diff (git rm --cached, or .gitignore it)",
+            items=(failures + warnings)[:_MAX_ITEMS],
+        )
+    if warnings:
+        return CheckResult(
+            id="large-files",
+            title="Large files",
+            severity=Severity.WARN,
+            detail=f"{len(warnings)} large file(s) in the diff",
+            fix="check the file belongs in the PR before opening it",
+            items=warnings[:_MAX_ITEMS],
+        )
+    return CheckResult(
+        id="large-files",
+        title="Large files",
+        severity=Severity.PASS,
+        detail="no binary or oversized files in the diff",
         fix="",
         items=[],
     )

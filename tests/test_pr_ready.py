@@ -87,6 +87,7 @@ def test_clean_branch_passes(repo: Path) -> None:
     assert report.ok is True
     assert report.exit_code == 0
     assert _result(report, "branch").severity == Severity.PASS
+    assert _result(report, "large-files").severity == Severity.PASS
     assert _result(report, "tests").severity == Severity.PASS
     assert _result(report, "commits").severity == Severity.PASS
 
@@ -158,6 +159,65 @@ def test_whitespace_fails(repo: Path) -> None:
     report = run_gate(cwd=repo)
 
     assert _result(report, "whitespace").severity == Severity.FAIL
+
+
+def test_fix_strips_trailing_whitespace(repo: Path) -> None:
+    _branch(repo, "fix/11-ws-fix")
+    _write(repo, "app.py", "x = 1 \n\ny = 2\t\n")
+    _commit(repo, "feat: whitespace")
+
+    report = run_gate(cwd=repo, fix=True)
+
+    assert _result(report, "autofix-whitespace").severity == Severity.PASS
+    assert (repo / "app.py").read_text() == "x = 1\n\ny = 2\n"
+
+
+def test_fix_whitespace_nothing_to_fix(repo: Path) -> None:
+    _branch(repo, "fix/11-ws-clean")
+    _write(repo, "app.py", "x = 1\n")
+    _commit(repo, "feat: clean")
+
+    report = run_gate(cwd=repo, fix=True)
+
+    assert _result(report, "autofix-whitespace").severity == Severity.SKIP
+
+
+def test_binary_file_fails_large_files(repo: Path) -> None:
+    _branch(repo, "fix/12-binary")
+    binary = repo / "assets" / "logo.png"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + b"\x00" * 64)
+    _commit(repo, "feat: add logo")
+
+    report = run_gate(cwd=repo)
+
+    large = _result(report, "large-files")
+    assert large.severity == Severity.FAIL
+    assert any("assets/logo.png" in item and "binary" in item for item in large.items)
+
+
+def test_oversized_file_warns(repo: Path) -> None:
+    _branch(repo, "fix/12-big")
+    _write(repo, "data/notes.txt", "x\n" * (300 * 1024 // 2))
+    _commit(repo, "feat: add notes")
+
+    report = run_gate(cwd=repo)
+
+    large = _result(report, "large-files")
+    assert large.severity == Severity.WARN
+    assert any("data/notes.txt" in item for item in large.items)
+
+
+def test_huge_file_fails_large_files(repo: Path) -> None:
+    _branch(repo, "fix/12-huge")
+    _write(repo, "data/dump.txt", "x\n" * (1100 * 1024 // 2))
+    _commit(repo, "feat: add dump")
+
+    report = run_gate(cwd=repo)
+
+    large = _result(report, "large-files")
+    assert large.severity == Severity.FAIL
+    assert any("data/dump.txt" in item for item in large.items)
 
 
 def _make_hermes_shim(bin_dir: Path) -> None:

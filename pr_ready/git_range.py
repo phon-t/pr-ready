@@ -291,6 +291,34 @@ def status_porcelain(repo: Path) -> tuple[bool, list[str], list[str]]:
     return not records, changed, untracked
 
 
+def blob_sizes(repo: Path, paths: list[str]) -> dict[str, int]:
+    """Return ``{path: size in bytes}`` for *paths* as they exist at HEAD.
+
+    Deleted files (absent from HEAD) are omitted. Sizes come from
+    ``git ls-tree`` so they describe the committed range, not the
+    working tree, which may be dirty.
+    """
+    if not paths:
+        return {}
+    out = _run_git(
+        repo,
+        ["ls-tree", "-r", "-l", "-z", "HEAD", "--", *paths[:_MAX_FILES]],
+    )
+    sizes: dict[str, int] = {}
+    for record in out.split("\x00"):
+        if not record or "\t" not in record:
+            continue
+        meta, path = record.split("\t", 1)
+        fields = meta.split()
+        if len(fields) != 4 or fields[1] != "blob":
+            continue
+        try:
+            sizes[path] = int(fields[3])
+        except ValueError:
+            continue
+    return sizes
+
+
 def diff_check(repo: Path, merge_base: str) -> list[str]:
     """Return whitespace/conflict-marker problems found by ``diff --check``.
 

@@ -20,9 +20,10 @@ def run_gate(
 ) -> GateReport:
     """Run all pre-PR checks and return a GateReport.
 
-    Check order: branch, clean-tree, whitespace, secrets, debug, lint,
-    tests, commits, pr-body, docs-drift, ci. If ``fix`` is true, ruff
-    auto-fixes are applied before the lint check runs.
+    Check order: branch, clean-tree, whitespace, large-files, secrets,
+    debug, lint, tests, commits, pr-body, docs-drift, ci. If ``fix`` is
+    true, ruff auto-fixes and trailing-whitespace fixes are applied
+    before the lint check runs.
     """
     try:
         info = collect_repo(cwd)
@@ -56,6 +57,16 @@ def run_gate(
                 fix="" if applied else "ruff check --fix .",
             )
         )
+        ws_applied, ws_detail = fixers.apply_whitespace_fixes(info.root, info.merge_base)
+        results.append(
+            CheckResult(
+                id="autofix-whitespace",
+                title="Auto-fix (whitespace)",
+                severity=Severity.PASS if ws_applied else Severity.SKIP,
+                detail=ws_detail,
+                fix="" if ws_applied else "strip trailing whitespace on flagged lines",
+            )
+        )
 
     files, added = pr_diff(info.root, info.merge_base)
     changed = changed_paths(info.root, info.merge_base)
@@ -66,6 +77,9 @@ def run_gate(
     results.append(checks.check_branch(info))
     results.append(checks.check_clean_tree(info, changed_list))
     results.append(checks.check_whitespace(ws_problems))
+    results.append(
+        checks.check_large_files(files, git_range.blob_sizes(info.root, [c.path for c in files]))
+    )
     results.append(checks.check_secrets(added))
     results.append(checks.check_debug(added, strict=strict))
     results.append(runners.check_lint(info.root))
